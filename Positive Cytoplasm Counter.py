@@ -11,7 +11,7 @@ from scipy.spatial import cKDTree
 # =====================================================================
 # Configuration
 # =====================================================================
-INPUT_FOLDER = 'C:/Users/Cardboard/Desktop/Work/Papers/Manuscript/ACE Proposal/Figures/GINS images'
+INPUT_FOLDER = 'paht/to/your/folder'
 OUTPUT_EXCEL = os.path.join(INPUT_FOLDER, 'cell_counts_results.xlsx')
 
 # =====================================================================
