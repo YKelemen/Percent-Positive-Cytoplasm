@@ -1,21 +1,29 @@
 import os
 import pandas as pd
 import numpy as np
-import openpyxl
 from skimage import io, exposure, measure
 from skimage.filters import threshold_otsu
 from stardist.models import StarDist2D
-from cellpose import models
+from stardist.plot import render_label  # Added missing import
+from cellpose import models, plot  # Added plot import
 from scipy.spatial import cKDTree
+import matplotlib.pyplot as plt
 
 # =====================================================================
 # Configuration
 # =====================================================================
-INPUT_FOLDER = 'paht/to/your/folder'
+SAVE_VISUALIZATIONS = True  # True = Visualize and save; False = Skip visualization and do not save
+
+INPUT_FOLDER = 'path/to/your/folder/with/your/merged/RGB/images'
 OUTPUT_EXCEL = os.path.join(INPUT_FOLDER, 'cell_counts_results.xlsx')
+VISUALIZATION_FOLDER = os.path.join(INPUT_FOLDER, 'visualizations') if SAVE_VISUALIZATIONS else None
+
+# Create visualization folder
+if SAVE_VISUALIZATIONS:
+    os.makedirs(VISUALIZATION_FOLDER, exist_ok=True)
 
 # =====================================================================
-# Initialize Models (load once for efficiency)
+# Initialize Models
 # =====================================================================
 model_stardist = StarDist2D.from_pretrained('2D_versatile_fluo')
 model_cellpose = models.Cellpose(gpu=False, model_type='cyto2')
@@ -30,6 +38,9 @@ for filename in os.listdir(INPUT_FOLDER):
         continue
 
     try:
+        # Get filename base
+        filename_base = os.path.splitext(filename)[0]  # Added definition
+
         # Load image
         image_path = os.path.join(INPUT_FOLDER, filename)
         image = io.imread(image_path)
@@ -38,9 +49,6 @@ for filename in os.listdir(INPUT_FOLDER):
         if image.shape[-1] == 4:
             image = image[..., :3]
 
-        # =======================================
-        # Change red to green by changing 0 to 1
-        # =======================================
         # Extract channels
         red = image[..., 0]  # Cytoplasm (Red)
         dapi = image[..., 2]  # Nuclei (Blue)
@@ -52,11 +60,32 @@ for filename in os.listdir(INPUT_FOLDER):
         nuclei_labels, _ = model_stardist.predict_instances(dapi_norm, prob_thresh=0.479071, nms_thresh=0.3)
         total_cells = nuclei_labels.max()
 
+        # =============================================================
+        # Visualization 1: Nuclei Segmentation
+        # =============================================================
+        if SAVE_VISUALIZATIONS:
+            plt.figure(figsize=(10, 10))
+            plt.imshow(render_label(nuclei_labels, img=dapi_norm, alpha=0.7, cmap='jet'))
+            plt.title(f'Nuclei Segmentation: {total_cells} cells')
+            plt.savefig(os.path.join(VISUALIZATION_FOLDER, f'{filename_base}_nuclei.png'))
+            plt.close()
+
         # =================================================================
         # Process Red Channel
         # =================================================================
         channels = [0, 2]  # [cytoplasm_channel, nucleus_channel]
         cell_masks, _, _, _ = model_cellpose.eval(image, diameter=30, channels=channels)
+
+        # =================================================================
+        # Visualization 2: Nuclei-Cytoplasm Association
+        # ================================================================
+        if SAVE_VISUALIZATIONS:
+            plt.figure(figsize=(12, 12))
+            plt.imshow(red, cmap='gray')  # Red channel background
+            plt.imshow(nuclei_labels > 0, cmap='Greens', alpha=0.3)  # Nuclei
+            plt.title(f'Nuclei-Cytoplasm Association: {filename_base}')
+            plt.savefig(os.path.join(VISUALIZATION_FOLDER, f'{filename_base}_association.png'))
+            plt.close()
 
         # =================================================================
         # Association and Analysis
@@ -80,6 +109,29 @@ for filename in os.listdir(INPUT_FOLDER):
 
         threshold = threshold_otsu(red)
         positive_cells = np.sum(nuclei_intensity > threshold)
+        # =================================================================
+        # Positivity Visualization (Add this after threshold calculation)
+        # =================================================================
+        if SAVE_VISUALIZATIONS:
+            # Create figure
+            plt.figure(figsize=(12, 6))
+
+            # Subplot 1: Original cytoplasmic staining
+            plt.subplot(1, 2, 1)
+            plt.imshow(red, cmap='gray')
+            plt.title('Original Cytoplasm')
+
+            # Subplot 2: Thresholded positivity
+            plt.subplot(1, 2, 2)
+            plt.imshow(red > threshold, cmap='gray')
+            plt.title(f'Positive Cells (Threshold = {threshold:.1f})')
+
+            # Save and close
+            plt.tight_layout()
+            plt.savefig(os.path.join(VISUALIZATION_FOLDER, f'{filename_base}_positivity.png'))
+            plt.close()
+
+
 
         # =================================================================
         # Calculate Percentage
@@ -88,7 +140,7 @@ for filename in os.listdir(INPUT_FOLDER):
 
         # Add to results
         results.append({
-            'Filename': os.path.splitext(filename)[0],
+            'Filename': filename_base,
             'DAPI+ Cells': total_cells,
             'Cytoplasmic+ Cells': positive_cells,
             'Percentage': round(percentage, 2)
